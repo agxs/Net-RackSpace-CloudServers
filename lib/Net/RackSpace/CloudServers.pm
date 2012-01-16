@@ -170,6 +170,9 @@ sub get_server {
     ? ( defined $id ? '/servers/' . $id : '/servers/detail' )
     : ( defined $id ? '/servers/' . $id : '/servers' )
   );
+  # Fix for the caching that Rackspace does. This ensures that the list of
+  # returned servers is always correct.
+  $uri = $uri."?cacheid=".time();
   my $request = HTTP::Request->new(
     'GET',
     $self->server_management_url . $uri,
