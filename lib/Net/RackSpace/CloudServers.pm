@@ -7,6 +7,7 @@ use Net::RackSpace::CloudServers::Flavor;
 use Net::RackSpace::CloudServers::Server;
 use Net::RackSpace::CloudServers::Image;
 use Net::RackSpace::CloudServers::Limits;
+use Net::RackSpace::CloudServers::LoadBalancer;
 use LWP::ConnCache::MaxKeepAliveRequests;
 use LWP::UserAgent::Determined;
 use JSON;
@@ -29,9 +30,21 @@ our %api_endpoint_by_location = (
   UK => 'https://lon.auth.api.rackspacecloud.com/v1.0',
 );
 
+subtype ValidLBLocation => as 'Str' => where { $_ eq 'US_ORD' or
+                                               $_ eq 'US_DFW' or
+                                               $_ eq 'UK_LON' };
+
+our %api_endpoint_by_location_lb = (
+  US_ORD => 'https://ord.loadbalancers.api.rackspacecloud.com/v1.0/',
+  US_DFW => 'https://dfw.loadbalancers.api.rackspacecloud.com/v1.0/',
+  UK_LON => 'https://lon.loadbalancers.api.rackspacecloud.com/v1.0/',
+);
+
 # So this module can work on either the US or the UK versions
 # of the API, defaulting to the current default
 has 'location' => ( is => 'rw', isa => 'ValidLocation', required => 1, default => 'US' );
+
+has 'lb_location' => ( is => 'rw', isa => 'ValidLBLocation', required => 1, default => 'US_ORD' );
 
 has 'limits' => (
   is       => 'rw',
@@ -56,6 +69,11 @@ has 'storage_url' => (
 );
 has 'cdn_management_url' => ( is => 'rw', isa => 'Str', required => 0 );
 has 'token'              => ( is => 'rw', isa => 'Str', required => 0 );
+has 'lb_management_url' => (
+  is       => 'rw',
+  isa      => 'Str',
+  required => 0,
+);
 
 no Any::Moose;
 __PACKAGE__->meta->make_immutable();
@@ -114,6 +132,12 @@ sub _authenticate {
   my $cdn_management_url = $response->header('X-CDN-Management-Url')
     || confess 'Missing CDN management url';
   $self->storage_url($cdn_management_url);
+
+  my ($user_id) = (split(/\//, $server_management_url))[-1];
+  my $lb_management_url = $api_endpoint_by_location_lb{ $self->lb_location } .
+                          $user_id
+    || confess 'Missing LB management url';
+  $self->lb_management_url($lb_management_url);
 }
 
 sub _request {
@@ -365,6 +389,61 @@ sub delete_image {
   my $response = $self->_request($request);
   confess 'Unknown error' . $response->code unless scalar grep { $response->code eq $_ } (200, 204);
   return;
+}
+
+sub get_load_balancer {
+  my $self = shift;
+  my $id   = shift;
+  my $uri  = (defined $id ? '/loadbalancers/' . $id : '/loadbalancers');
+  # Fix for the caching that Rackspace does. This ensures that the list of
+  # returned servers is always correct.
+  $uri = $uri."?cacheid=".time();
+  my $request = HTTP::Request->new(
+    'GET',
+    $self->lb_management_url . $uri,
+    [ 'X-Auth-Token' => $self->token ]
+  );
+  my $response = $self->_request($request);
+  return if scalar grep { $response->code eq $_ } (204, 404);
+  confess 'Unknown error' . $response->code unless scalar grep { $response->code eq $_ } (200, 203);
+  my $hash_response = from_json( $response->content );
+  warn Dump($hash_response) if $DEBUG;
+
+  confess 'response does not contain key "loadBalancers"'
+    if ( !defined $id && !defined $hash_response->{loadBalancers} );
+
+  return map {
+    Net::RackSpace::CloudServers::LoadBalancer->new(
+      cloudservers    => $self,
+      id              => $_->{id},
+      name            => $_->{name},
+      protocol        => $_->{protocol},
+      port            => $_->{port},
+      algorithm       => $_->{algorithm},
+      status          => $_->{status},
+      created         => $_->{created}->{time},
+      updated         => $_->{updated}->{time},
+      virtualIps      => $_->{virtualIps}
+      )
+  } @{ $hash_response->{loadBalancers} } if ( !defined $id );
+
+  my $hserver = $hash_response->{server};
+  return Net::RackSpace::CloudServers::LoadBalancer->new(
+      cloudservers      => $self,
+      id                => $_->{id},
+      name              => $_->{name},
+      protocol          => $_->{protocol},
+      port              => $_->{port},
+      algorithm         => $_->{algorithm},
+      status            => $_->{status},
+      created           => $_->{created}->{time},
+      updated           => $_->{updated}->{time},
+      virtualIps        => $_->{virtualIps},
+      cluster           => $_->{cluster},
+      connectionLogging => $_->{connectionLogging},
+      nodes             => $_->{nodes},
+      sourceAddresses   => $_->{sourceAddresses},
+  );
 }
 
 =head1 NAME
