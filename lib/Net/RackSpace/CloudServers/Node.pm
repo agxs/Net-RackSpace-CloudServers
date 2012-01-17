@@ -3,6 +3,7 @@ use warnings;
 use strict;
 our $DEBUG = 0;
 use Any::Moose;
+use Any::Moose ( '::Util::TypeConstraints' );
 use HTTP::Request;
 use JSON;
 use YAML;
@@ -13,7 +14,12 @@ has 'id'           => ( is => 'ro', isa => 'Int', required => 1, default => 0 );
 has 'loadbalancerid' => ( is => 'rw', isa => 'Int', required => 1 );
 has 'address'      => ( is => 'rw', isa => 'Str', required => 1);
 has 'port'         => ( is => 'rw', isa => 'Int', required => 1);
-has 'condition'    => ( is => 'rw', isa => 'Str', required => 1);
+
+subtype ValidCondition => as 'Str' => where { $_ eq 'ENABLED' or
+                                              $_ eq 'DISABLED' or
+                                              $_ eq 'DRAINING' };
+
+has 'condition'    => ( is => 'rw', isa => 'ValidCondition', required => 1);
 has 'status'       => ( is => 'rw', isa => 'Str', required => 1, default => 0 );
 has 'weight'       => ( is => 'rw', isa => 'Maybe[Int]', required => 0, default => undef );
 
