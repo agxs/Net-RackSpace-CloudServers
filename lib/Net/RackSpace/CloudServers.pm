@@ -300,7 +300,7 @@ sub get_image {
     ? ( defined $id ? '/images/' . $id : '/images/detail' )
     : ( defined $id ? '/images/' . $id : '/images' )
   );
-  $uri .= '?changes_since=0';
+  $uri .= '?changes_since=0&cacheid='.time();
   my $request = HTTP::Request->new(
     'GET',
     $self->server_management_url . $uri,
